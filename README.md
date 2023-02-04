@@ -103,14 +103,29 @@ This workflow will:
 4. Run RSpec tests in this image
 5. Run Cucumber tests in this image
 
-### Getting Started
+## Getting Started
+
+Argo Workflows, Argo CD, Argo Events, and Argo Rollouts typically all live on
+the same Kubernetes cluster.
+
+Kubernetes provides a common platform for deploying and managing containers,
+making it the natural choice for running Argo Workflows, Argo CD, and Argo
+Events. Having all of these components on the same cluster allows for easy
+integration and communication between them, enabling you to create a complete
+CI/CD automation platform that can be easily managed and scaled.
+
+It's possible to run Argo Workflows, Argo CD, and Argo Events on separate
+clusters, at the cost of increasing the complexity of the setup and would
+require additional infrastructure and network configuration to ensure
+communication between the clusters. In most cases, it's recommended to run all
+components on the same cluster for ease of use and management.
 
 ## Argo CD
 
 See: [Repo](https://github.com/argoproj/argo-cd/releases).
 
-Argo CD runs inside of Kubernetes. It will sync a given repo to a Kubernetes
-cluster. So the workflow would be:
+Argo CD runs inside of Kubernetes. It will sync a given repo (application state)
+to a Kubernetes cluster. So the workflow would be:
 
 1. Run a workflow to build, test, and publish your application container
 2. In Argo CD, register an application repo
@@ -137,15 +152,44 @@ below:
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
 
-## Argo Rollouts
-
-See: [Repo](https://argo-rollouts.readthedocs.io/en/stable/)
-
 ## Argo Events
 
 See: [Repo](https://argoproj.github.io/argo-events/)
 
+Argo Events is an event management solution for the Argo ecosystem. It can
+watch a number of external services for changes and trigger Workflows or CD.
+
 To kick off a workflow, CD, or Rollout, we use Argo Events.
+
+Argo Events can trigger both Argo Workflows and Argo CD.
+
+In one scenario, Argo Events can be used to trigger an Argo Workflow in response
+to a specific event. For example, you can configure Argo Events to trigger
+an Argo Workflow whenever a new image is pushed to a container registry. The
+Argo Workflow can then perform tasks such as building images, testing code,
+and deploying applications.
+
+In another scenario, Argo Workflows can trigger Argo CD by modifying the desired
+state of the applications being managed by Argo CD. For example, you can create
+an Argo Workflow that updates the source code or configuration of an
+application and commits the changes to the source repository. Argo CD is
+configured to continuously sync the desired state of the application with the
+actual state in the target environment, so when it detects changes in the source
+repository, it will trigger a redeployment of the updated application.
+
+In summary, Argo Events can trigger either Argo Workflows or Argo CD, depending
+on the desired automation scenario, and both Argo Workflows and Argo CD can be
+used together to automate complex CI/CD pipelines and continuously manage the
+desired state of your applications.
+
+## Argo Rollouts
+
+See: [Repo](https://argo-rollouts.readthedocs.io/en/stable/)
+
+
+Argo Rollouts provides advanced deployment capabilities for your applications,
+allowing you to perform progressive delivery and canary releases, automate
+rollbacks, and control traffic routing. 
 
 # References
 
