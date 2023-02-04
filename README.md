@@ -4,8 +4,9 @@ To demo Argo Workflow, Events, and CD.
 
 ### Prerequisites
 
-1. [Install Argo CLI](https://github.com/argoproj/argo-workflows/releases)
-2. [Kubernetes Cluster](https://kind.sigs.k8s.io/)
+1. [Install Argo Workflows CLI](https://github.com/argoproj/argo-workflows/releases)
+2. [Install Argo CD CLI](https://argo-cd.readthedocs.io/en/stable/cli_installation/)
+3. [Kubernetes Cluster](https://kind.sigs.k8s.io/)
 
 ## Create Sample App 
 
@@ -74,10 +75,12 @@ docker-compose run web rake cucumber
 
 ## Argo Workflow (CI)
 
+See: [Repo](https://github.com/argoproj/argo-workflows).
+
 Install and test a sample workflow:
 
 ```
-./install-argo-workflow.sh
+./bin/001-install-argo-workflow.sh
 ```
 
 Port forward the UI:
@@ -104,9 +107,43 @@ This workflow will:
 
 ## Argo CD
 
+See: [Repo](https://github.com/argoproj/argo-cd/releases).
+
+Argo CD runs inside of Kubernetes. It will sync a given repo to a Kubernetes
+cluster. So the workflow would be:
+
+1. Run a workflow to build, test, and publish your application container
+2. In Argo CD, register an application repo
+3. When it's time to deploy to production, make a change in the [repo](https://github.com/codihuston/argo-cd-tutorial)
+   that Argo CD is monitoring
+
+   Argo CD will then sync the manifests to the Kubernetes cluster.
+
+In reality, Argo Workflows would commit a change to the repo that Argo CD is
+watching once the workflow is successful. Argo CD automatically polls repos for
+changes every 3 minutes. You can configure this to use [webhooks instead](https://argo-cd.readthedocs.io/en/stable/operator-manual/webhook/#:~:text=Git%20Webhook%20Configuration-,Overview,Bitbucket%2C%20Bitbucket%20Server%20and%20Gogs.).
+
+Install `Argo CD` and configure it to sync the [myapp gitops repository](https://github.com/codihuston/argo-cd-tutorial).
+
+```
+./bin/002-install-argo-cd-and-deploy-myapp.sh
+```
+
+This script will automatically port forward the UI, but in the case that
+it doesn't (port forwarding seems to be flaky for me) you can run this command
+below:
+
+```
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+```
+
 ## Argo Rollouts
 
+See: [Repo](https://argo-rollouts.readthedocs.io/en/stable/)
+
 ## Argo Events
+
+See: [Repo](https://argoproj.github.io/argo-events/)
 
 To kick off a workflow, CD, or Rollout, we use Argo Events.
 
