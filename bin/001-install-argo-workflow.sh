@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# References: https://argoproj.github.io/argo-workflows/quick-start/
 main(){
   ARGO_WORKFLOWS_VERSION="3.4.4"
   kubectl create namespace argo
