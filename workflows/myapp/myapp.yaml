@@ -1,0 +1,151 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: myapp-workflow-
+spec:
+  entrypoint: main
+  arguments:
+    parameters:
+      - name: repo
+        value: https://github.com/argoproj/argo-workflows
+      - name: branch
+        value: master
+      - name: path
+        value: test/e2e/images/argosay/v2
+      - name: registry_push
+        value: registry.tld
+      - name: registry_pull
+        value: registry.tld
+      - name: image
+        value: alexcollinsintuit/argosay:v2
+  volumeClaimTemplates:                 # define volume, same syntax as k8s Pod spec
+  - metadata:
+      name: work-dir                     # name of volume claim
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi                  # Gi => 1024 * 1024 * 1024
+  templates:
+    - name: main
+      inputs: {}
+      outputs: {}
+      metadata: {}
+      dag:
+        tasks:
+          - name: clone
+            template: clone
+            arguments:
+              parameters:
+                - name: repo
+                  value: '{{workflow.parameters.repo}}'
+                - name: branch
+                  value: '{{workflow.parameters.branch}}'
+          - name: image
+            template: image
+            arguments:
+              parameters:
+                - name: path
+                  value: '{{workflow.parameters.path}}'
+                - name: registry
+                  value: '{{workflow.parameters.registry_push}}'
+                - name: image
+                  value: '{{workflow.parameters.image}}'
+            depends: "(clone.Succeeded)"
+          - name: "rspec-tests"
+            template: unit-test
+            arguments:
+              parameters:
+              - name: registry
+                value: '{{workflow.parameters.registry_pull}}'
+              - name: image
+                value: '{{workflow.parameters.image}}'
+            depends: "(clone.Succeeded && image.Succeeded)"
+          - name: "cucumber-tests"
+            template: e2e-test
+            arguments:
+              parameters:
+              - name: registry
+                value: '{{workflow.parameters.registry_pull}}'
+              - name: image
+                value: '{{workflow.parameters.image}}'
+            depends: "(rspec-tests.Succeeded)"
+    - name: clone
+      inputs:
+        parameters:
+          - name: repo
+          - name: branch
+      outputs: {}
+      metadata: {}
+      container:
+        name: ''
+        image: alpine/git:v2.26.2
+        args:
+          - clone
+          - '--depth'
+          - '1'
+          - '--branch'
+          - '{{inputs.parameters.branch}}'
+          - '--single-branch'
+          - '{{inputs.parameters.repo}}'
+          - .
+        workingDir: /work
+        volumeMounts:
+          - name: work-dir
+            mountPath: /work
+    - name: image
+      inputs:
+        parameters:
+          - name: path
+          - name: registry
+          - name: image
+      outputs: {}
+      metadata: {}
+      container:
+        name: ''
+        image: moby/buildkit:v0.9.3-rootless
+        command:
+          - buildctl-daemonless.sh
+        args:
+          - build
+          - '--frontend'
+          - dockerfile.v0
+          - '--local'
+          - context=.
+          - '--local'
+          - dockerfile=.
+          - '--output'
+          - >-
+            type=image,name={{inputs.parameters.registry}}/{{inputs.parameters.image}},push=true,registry.insecure=true
+        workingDir: /work/{{inputs.parameters.path}}
+        env:
+          - name: BUILDKITD_FLAGS
+            value: '--oci-worker-no-process-sandbox'
+          # - name: DOCKER_CONFIG
+          #   value: /.docker
+        volumeMounts:
+          - name: work-dir
+            mountPath: /work
+          # - name: docker-config
+          #   mountPath: /.docker
+      # volumes:
+      #   - name: docker-config
+      #     secret:
+      #       secretName: docker-config
+    - name: unit-test
+      inputs:
+        parameters:
+        - name: registry
+        - name: image
+      container:
+        image: "{{inputs.parameters.registry}}/{{inputs.parameters.image}}"
+        command: ["rspec"]
+    - name: e2e-test
+      inputs:
+        parameters:
+        - name: registry
+        - name: image
+      container:
+        image: "{{inputs.parameters.registry}}/{{inputs.parameters.image}}"
+        command: ["rake", "cucumber"]
+

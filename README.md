@@ -86,6 +86,20 @@ Port forward the UI:
 kubectl -n argo port-forward deployment/argo-server 2746:2746
 ```
 
+Run the workflow for `myapp`:
+
+```
+./ci/test.sh
+```
+
+This workflow will:
+
+1. Clone the repository
+2. Build the image (rootless buildkit)
+3. Push it to the internal KinD registry
+4. Run RSpec tests in this image
+5. Run Cucumber tests in this image
+
 ### Getting Started
 
 ## Argo CD
@@ -95,3 +109,10 @@ kubectl -n argo port-forward deployment/argo-server 2746:2746
 ## Argo Events
 
 To kick off a workflow, CD, or Rollout, we use Argo Events.
+
+# References
+
+- https://github.com/argoproj/argo-workflows/blob/master/examples/buildkit-template.yaml
+- https://github.com/moby/buildkit
+- https://kind.sigs.k8s.io/docs/user/local-registry/
+- https://argoproj.github.io/argo-workflows/enhanced-depends-logic/

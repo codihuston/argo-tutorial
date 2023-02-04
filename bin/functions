@@ -1,0 +1,107 @@
+#!/bin/bash
+
+repo_root() {
+  git rev-parse --show-toplevel
+}
+
+timestamp() {
+  date +"%Y_%m_%d_%I_%M_%s"
+}
+
+files_dir() {
+  echo "$(repo_root)/src/files"
+}
+
+log_dir() {
+  echo "$(repo_root)/tmp"
+}
+
+check_env(){
+  # evaluate given variable name to get its value
+  eval temp_var="\$$1"
+
+  # verify it has a non-empty value
+  if [ -z "${temp_var}" ]; then
+    echo "ENV VAR \"$1\" must be set. Try sourcing \"src/config.env\" and running this command again."
+    exit 1
+  fi
+}
+
+# Returns 0 if is gnu sed, otherwise it returns 1.
+is_gnu_sed() {
+  sed --version >/dev/null 2>&1
+}
+
+sed_in_place() {
+  if is_gnu_sed; then
+    sed "$@"
+  else
+    sed -i '' "$@"
+  fi
+}
+
+announce(){
+  echo "------------------------------------"
+  echo "$1"
+  echo "------------------------------------"
+}
+
+# Runs a given command if debug is off.
+cmd() {
+    if [ "$DEBUG_LEVEL" = "false" ]; then
+        "$@"
+    fi
+}
+
+# Runs a given command if debug is on.
+debug_cmd() {
+    if [ "$DEBUG_LEVEL" = "true" ]; then
+        "$@"
+    fi
+}
+
+require_dap_net() {
+  check_env "DOCKER_NETWORK"
+  local dap_net_pid
+  dap_net_pid=$(docker network ls --quiet --filter name="$DOCKER_NETWORK")
+  if [[ -z "$dap_net_pid" ]]; then
+    echo "FATAL: docker network '$DOCKER_NETWORK' does not exist. It must be created before continuing."
+    exit 1
+  fi
+}
+
+# Runs docker-compose commands from the root of this repository
+compose() {
+  pushd "$(repo_root)" > /dev/null || return
+    docker-compose "$@"
+  popd > /dev/null || return
+}
+
+version() {
+  if [ ! -f "$(repo_root)/VERSION" ]; then
+    echo "0.0.0"
+  else
+    cat "$(repo_root)/VERSION"
+  fi
+}
+
+is_gnu_base_64() {
+  base64 --version >/dev/null 2>&1
+}
+
+# Assumes arg is a file path...
+base64_proxy() {
+  if is_gnu_base_64; then
+    base64 -w 0 "$@"
+  else
+    cat "$@" | base64 
+  fi
+}
+
+git_sha(){
+  git rev-parse --short HEAD
+}
+
+git_current_branch(){
+  git branch --show-current
+}
