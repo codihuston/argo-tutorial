@@ -7,6 +7,30 @@ To demo Argo Workflow, Events, and CD.
 1. [Install Argo CLI](https://github.com/argoproj/argo-workflows/releases)
 2. [Kubernetes Cluster](https://kind.sigs.k8s.io/)
 
+## Create Sample App 
+
+The commands below will be run from the `src` directory.
+
+### Initialize the App Source Code
+
+1. Build the ruby image
+
+  ```
+  docker build -f Dockerfile.rails -t init-rails .
+  ```
+
+1. Create the rails app
+
+  ```bash
+  docker run -it --rm -v "$PWD":/app -w /app init-rails
+
+  # in the container
+  rails new --skip-git myapp
+  ```
+
+> Note: if you are using Linux (Ubuntu) aka not Docker Desktop, you must take
+> ownership of the files created by the above container:
+> `sudo chown $USER -R src/myapp/`.
 
 ## Argo Workflow (CI)
 
