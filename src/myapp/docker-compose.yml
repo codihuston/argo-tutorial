@@ -1,0 +1,13 @@
+version: '3'
+services:
+  web:
+    build: .
+    user: "${UID}:${GID}"
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app:z
+  selenium:
+    image: selenium/standalone-chrome
+    ports:
+      - "4444:4444"

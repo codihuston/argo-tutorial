@@ -29,8 +29,48 @@ The commands below will be run from the `src` directory.
   ```
 
 > Note: if you are using Linux (Ubuntu) aka not Docker Desktop, you must take
-> ownership of the files created by the above container:
-> `sudo chown $USER -R src/myapp/`.
+> ownership of the files created by the above container by running the following
+> command from your container host: `sudo chown $USER -R src/myapp/`.
+
+If you are using Linux, before proceeding with the use of the docker-compose
+file, initialize your `.env` file like such:
+
+```bash
+cd src/myapp
+sed -e "s/{{ REPLACE_UID }}/$UID/g" -e "s/{{ REPLACE_GID }}/$UID/g" .env-example > .env
+```
+
+This will enable your container host user to modify files that were created by
+these docker containers.
+
+> Note: if you need to add new items to the `Gemfile`, you may need to
+> remove the `user` field in [docker-compose.yml](./src/myapp/docker-compose.yml)
+> so that the root of the container can be written to by the bundler.
+
+### Initialize Dependencies
+
+```bash
+docker-compose run web bundle install
+```
+
+Initialize the test frameworks:
+
+```
+docker-compose run web rails generate rspec:install
+docker-compose run web rails generate cucumber:install
+```
+
+> Note: be sure to take ownership of the files created again (if needed).
+
+### Run Sample Tests
+
+```bash
+# unit / integration
+docker-compose run web rspec
+
+# end to end
+docker-compose run web rake cucumber
+```
 
 ## Argo Workflow (CI)
 

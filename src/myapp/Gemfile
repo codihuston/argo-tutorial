@@ -67,6 +67,12 @@ end
 group :test do
   # Use system testing [https://guides.rubyonrails.org/testing.html#system-testing]
   gem "capybara"
-  gem "selenium-webdriver"
   gem "webdrivers"
+end
+
+group :development, :test do
+  gem 'cucumber-rails', '~> 2.6.1', require: false
+  gem 'database_cleaner', '~> 2.0.1'
+  gem 'rspec-rails', '~> 4.0.2'
+  gem 'selenium-webdriver'
 end
