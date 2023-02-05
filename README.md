@@ -1,3 +1,27 @@
+Table of Contents
+- [Purpose](#purpose)
+    - [Prerequisites](#prerequisites)
+  - [Create Sample App](#create-sample-app)
+    - [Initialize the App Source Code](#initialize-the-app-source-code)
+    - [Initialize Dependencies](#initialize-dependencies)
+    - [Run Sample Tests](#run-sample-tests)
+  - [Argo Workflow (CI)](#argo-workflow-ci)
+  - [Getting Started](#getting-started)
+  - [Argo CD](#argo-cd)
+  - [Vault Integration](#vault-integration)
+    - [Install Vault](#install-vault)
+    - [Initialize the Vault](#initialize-the-vault)
+    - [Unsteal the Vault](#unsteal-the-vault)
+    - [Create a Secret](#create-a-secret)
+    - [Enable AppRole Auth Method Backend](#enable-approle-auth-method-backend)
+    - [Create a Policy for our AppRole](#create-a-policy-for-our-approle)
+    - [Create an AppRole](#create-an-approle)
+    - [Login with RoleID and SecretID](#login-with-roleid-and-secretid)
+    - [Read Secrets using AppRole Token](#read-secrets-using-approle-token)
+  - [Argo Events](#argo-events)
+  - [Argo Rollouts](#argo-rollouts)
+- [References](#references)
+
 # Purpose
 
 To demo Argo Workflow, Events, and CD.
@@ -152,6 +176,208 @@ below:
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
 
+## Vault Integration
+
+This is step-by-step for implementing `argo-cd-vault-plugin` with Hashicorp
+Vault. Once I understand this, I might create a backend integration with Conjur.
+
+Vault is used to provide secrets to Argo Workflows and CD.
+
+### Install Vault
+
+See: [Install Vault](https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run)
+
+```bash
+# install vault
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm search repo hashicorp/vault
+helm install vault hashicorp/vault
+helm status vault
+
+# list vaults
+kubectl get pods -l app.kubernetes.io/name=vault
+```
+
+The above creates a vault named `vault-0` in the `default` namespace (unless
+your `kubectl` client is configured to use a specific namespace).
+
+### Initialize the Vault
+
+```bash
+kubectl exec -ti vault-0 -- vault operator init
+```
+
+This will output a list of `Unseal Keys` and an `Initial Root Token`. We must
+use 3 of these keys to unsteal the vault once it has been sealed. Save these
+somewhere safe.
+
+### Unsteal the Vault
+
+Using any three of the keys above, unseal the vault"
+
+```bash
+# Unseal the first vault server until it reaches the key threshold
+$ kubectl exec -ti vault-0 -- vault operator unseal # ... Unseal Key 1
+$ kubectl exec -ti vault-0 -- vault operator unseal # ... Unseal Key 2
+$ kubectl exec -ti vault-0 -- vault operator unseal # ... Unseal Key 3
+```
+
+The final output should note `Sealed: false`:
+
+```bash
+Key             Value
+---             -----
+Seal Type       shamir
+Initialized     true
+Sealed          false # <---
+Total Shares    5
+Threshold       3
+Version         1.12.1
+Build Date      2022-10-27T12:32:05Z
+Storage Type    file
+Cluster Name    vault-cluster-578822fc
+Cluster ID      baec362c-5b8e-2faa-4a4c-f105b0415e7c
+HA Enabled      false
+```
+
+### Create a Secret
+
+See: [Your First Secret](https://developer.hashicorp.com/vault/tutorials/getting-started/getting-started-first-secret)
+
+> Note: below, we bypass vault login in the CLI. You can use the GUI at
+> [localhost:8200](localhost:8200) and signing in with the same token, given
+> you use the provided [port-forward](./bin/port-forward.sh) script.
+
+```bash
+# Exec into the vault pod
+kubectl exec -ti vault-0 -- sh
+
+# Help menu
+vault kv --help
+
+# Export the root token from earlier so that `vault login` is not required
+export VAULT_TOKEN=
+
+# Init the `secret` path
+vault secrets enable -path=secret/ kv
+
+# Load the secret
+vault kv put -mount=secret hello foo=world
+
+# Getting a secret
+vault kv get -mount=secret hello foo=world
+
+# Output
+vault kv get -mount=secret hello
+=== Data ===
+Key    Value
+---    -----
+foo    world
+```
+
+### Enable AppRole Auth Method Backend
+
+See: [AppRole Auth Method](https://developer.hashicorp.com/vault/docs/auth/approle)
+
+This allows machines or apps to authenticate with Vault-defined roles. First,
+we must enable this backend:
+
+```bash
+# Enable the backend
+vault auth enable approle
+
+# List backends
+vault auth list
+```
+
+### Create a Policy for our AppRole
+
+This enables an AppRole to access secrets in a manner that we specify:
+
+Create and write the policy to Vault:
+
+```bash
+policy=$(cat << EOF
+path "secret/*" {
+  capabilities = ["read"]
+}
+EOF
+)
+
+echo $policy | vault policy write read-all-secrets -
+# Success! Uploaded policy: read-all-secrets
+
+# List policies
+vault policy list
+```
+
+### Create an AppRole
+
+With the backend enabled, we can create an AppRole with a given policy
+
+```bash
+vault write auth/approle/role/argocd policies=read-all-secrets \
+    role_id=77f0807d-ac28-47e8-ade4-3831b354288a
+# Success! Data written to: auth/approle/role/argocd
+```
+
+Now Retrieve the Role ID:
+
+```bash
+vault read auth/approle/role/argocd/role-id
+# Output
+Key        Value
+---        -----
+role_id    77f0807d-ac28-47e8-ade4-3831b354288a
+```
+
+Generate a Secret ID:
+
+```bash
+vault write -force auth/approle/role/argocd/secret-id
+
+# Output
+Key                   Value
+---                   -----
+secret_id             ed0a642f-2acf-c2da-232f-1b21300d5f29
+secret_id_accessor    a240a31f-270a-4765-64bd-94ba1f65703c
+secret_id_num_uses    0
+secret_id_ttl         0s
+```
+
+### Login with RoleID and SecretID
+
+Retrieve a Token that the App would use to authenticate and fetch secrets:
+
+```bash
+vault write auth/approle/login role_id="77f0807d-ac28-47e8-ade4-3831b354288a" \
+    secret_id="ed0a642f-2acf-c2da-232f-1b21300d5f29"
+# Output
+Key                     Value
+---                     -----
+token                   hvs.CAESIJdE3dMjtj22X5rMEDPXBrSe2jKUXNikg1dx9mqPviNqGh4KHGh2cy5jNE1GMVA4N2FQbnkySXA0Q2NZQ3l6REw
+token_accessor          KujSYcSMky0LCkByUHylDCoC
+token_duration          768h
+token_renewable         true
+token_policies          ["default" "read-all-secrets"]
+identity_policies       []
+policies                ["default" "read-all-secrets"]
+token_meta_role_name    argocd
+```
+
+### Read Secrets using AppRole Token
+
+```bash
+export APP_TOKEN="s.ncEw5bAZJqvGJgl8pBDM0C5h"
+VAULT_TOKEN=$APP_TOKEN vault kv get secret/hello
+
+# Output
+=== Data ===
+Key    Value
+---    -----
+foo    world
+```
+
 ## Argo Events
 
 See: [Repo](https://argoproj.github.io/argo-events/)
@@ -197,3 +423,4 @@ rollbacks, and control traffic routing.
 - https://github.com/moby/buildkit
 - https://kind.sigs.k8s.io/docs/user/local-registry/
 - https://argoproj.github.io/argo-workflows/enhanced-depends-logic/
+- https://itnext.io/argocd-secret-management-with-argocd-vault-plugin-539f104aff05
