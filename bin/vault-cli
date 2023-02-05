@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# References: https://argo-cd.readthedocs.io/en/stable/getting_started/
+main(){
+ kubectl exec -ti vault-0 -- "$@"
+}
+
+main "$@"

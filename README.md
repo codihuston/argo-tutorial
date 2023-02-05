@@ -8,7 +8,7 @@ Table of Contents
   - [Argo Workflow (CI)](#argo-workflow-ci)
   - [Getting Started](#getting-started)
   - [Argo CD](#argo-cd)
-  - [Vault Integration](#vault-integration)
+  - [Setup Hashicorp Vault](#setup-hashicorp-vault)
     - [Install Vault](#install-vault)
     - [Initialize the Vault](#initialize-the-vault)
     - [Unsteal the Vault](#unsteal-the-vault)
@@ -18,8 +18,14 @@ Table of Contents
     - [Create an AppRole](#create-an-approle)
     - [Login with RoleID and SecretID](#login-with-roleid-and-secretid)
     - [Read Secrets using AppRole Token](#read-secrets-using-approle-token)
+  - [Setup Argo CD Vault Plugin](#setup-argo-cd-vault-plugin)
+    - [Add the Plugin to the Argo CD Server Deployment](#add-the-plugin-to-the-argo-cd-server-deployment)
+    - [Register the Plugin with Argo CD](#register-the-plugin-with-argo-cd)
+    - [Point Argo CD Repo Server to Vault](#point-argo-cd-repo-server-to-vault)
+    - [Register an Application with ArgoCD that Leverages a Vault Secret](#register-an-application-with-argocd-that-leverages-a-vault-secret)
   - [Argo Events](#argo-events)
   - [Argo Rollouts](#argo-rollouts)
+- [After Thoughts and Concerns](#after-thoughts-and-concerns)
 - [References](#references)
 
 # Purpose
@@ -176,7 +182,7 @@ below:
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
 
-## Vault Integration
+## Setup Hashicorp Vault
 
 This is step-by-step for implementing `argo-cd-vault-plugin` with Hashicorp
 Vault. Once I understand this, I might create a backend integration with Conjur.
@@ -204,7 +210,7 @@ your `kubectl` client is configured to use a specific namespace).
 ### Initialize the Vault
 
 ```bash
-kubectl exec -ti vault-0 -- vault operator init
+./bin/vault-cli vault operator init
 ```
 
 This will output a list of `Unseal Keys` and an `Initial Root Token`. We must
@@ -217,9 +223,9 @@ Using any three of the keys above, unseal the vault"
 
 ```bash
 # Unseal the first vault server until it reaches the key threshold
-$ kubectl exec -ti vault-0 -- vault operator unseal # ... Unseal Key 1
-$ kubectl exec -ti vault-0 -- vault operator unseal # ... Unseal Key 2
-$ kubectl exec -ti vault-0 -- vault operator unseal # ... Unseal Key 3
+$ ./bin/vault-cli vault operator unseal # ... Unseal Key 1
+$ ./bin/vault-cli vault operator unseal # ... Unseal Key 2
+$ ./bin/vault-cli vault operator unseal # ... Unseal Key 3
 ```
 
 The final output should note `Sealed: false`:
@@ -250,7 +256,7 @@ See: [Your First Secret](https://developer.hashicorp.com/vault/tutorials/getting
 
 ```bash
 # Exec into the vault pod
-kubectl exec -ti vault-0 -- sh
+./bin/vault-cli sh
 
 # Help menu
 vault kv --help
@@ -259,21 +265,45 @@ vault kv --help
 export VAULT_TOKEN=
 
 # Init the `secret` path
-vault secrets enable -path=secret/ kv
+vault secrets enable -path="secret" kv-v2
 
 # Load the secret
 vault kv put -mount=secret hello foo=world
 
 # Getting a secret
-vault kv get -mount=secret hello foo=world
+vault kv get secret/hello
 
 # Output
-vault kv get -mount=secret hello
+== Secret Path ==
+secret/data/hello
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2023-02-05T09:12:14.7971105Z
+custom_metadata    <nil>
+deletion_time      n/a
+destroyed          false
+version            1
+
 === Data ===
 Key    Value
 ---    -----
 foo    world
 ```
+
+> Important: apparently `kv` version 1 and 2 differ in that, when creating a
+> secret when using 2 will prefix the created secret with `/data/`. For example
+> `secret/hello` would be read using `secret/data/argocd/secrets`. You can check
+> your `kv` version for a given mount `secret` as follows: `vault read -format=json /sys/mounts/secret/tune`.
+> Or verify the options column for the `secret` mount: `vault secrets list -detailed`
+>
+> If the options.version field is null, it means that the secrets engine does
+> not support multiple versions of secrets. In this case, the secrets engine
+>  will only store the latest version of each secret, and there will not be any
+>  way to roll back to previous versions of secrets.
+>
+> From this tutorial, `vault version` is reporting `Vault v1.12.1 (e34f8a14fb7a88af4640b09f3ddbb5646b946d9c), built 2022-10-27T12:32:05Z`.
 
 ### Enable AppRole Auth Method Backend
 
@@ -378,6 +408,131 @@ Key    Value
 foo    world
 ```
 
+## Setup Argo CD Vault Plugin
+
+Once you have [Setup Hashicorp Vault](#setup-hashicorp-vault), you can proceed
+with this section.
+
+Integrating with Vault will allow you to template the values of
+Kubernetes Secret resources with values that exist in Vault. That is, if your
+application depends on Kubernetes Secrets (say, `envFrom secretRef`), then
+this is the use case of Argo CD Vault Plugin.
+
+Whether or not this integration can be used with Argo Workflows is TBD.
+
+### Add the Plugin to the Argo CD Server Deployment
+
+This is done by making changes to the Kubernetes manifest used for installing
+Argo CD. I have already done this. This is done in 3 parts:
+
+1. Creating an `emptyDir` volume to hold custom binaries (`spec.volumes`)
+2. Use an init container to download/copy/build custom binaries into `emptyDir`
+3. Mount the custom binary to the bin directory (spec.containers[*].volumeMounts on the `argocd-repo-server` container)
+
+Apply the manifest:
+
+```bash
+kubectl apply -n "argocd" -f kubernetes/argo-cd-2.5.10-install.yaml
+```
+
+Verify the plugin binary exists and is runnable:
+
+```bash
+# Note: this is a proxy script used to find the argocd deployment pod. If
+# multiple of these pods are reconciling, you will want to wait till there
+# is only one pod before verifying. The script outputs all of the pods matching
+# the label: app.kubernetes.io/name=argocd-repo-server
+./bin/argo-cd-repo-server-cli argocd-vault-plugin
+
+# Output
+This is a plugin to replace <placeholders> with Vault secrets
+
+Usage:
+  argocd-vault-plugin [flags]
+  argocd-vault-plugin [command]
+
+Available Commands:
+  completion  generate the autocompletion script for the specified shell
+  generate    Generate manifests from templates with Vault values
+  help        Help about any command
+  version     Print argocd-vault-plugin version information
+
+Flags:
+  -h, --help   help for argocd-vault-plugin
+
+Use "argocd-vault-plugin [command] --help" for more information about a command.
+```
+
+### Register the Plugin with Argo CD
+
+This is done by updating the Argo CD ConfigMap by adding the following:
+
+> Note: this has already been injected into the provided argocd installation
+> manifest.
+
+```yaml
+data:
+  configManagementPlugins: |-
+    - name: argocd-vault-plugin
+      generate:
+        command: ["argocd-vault-plugin"]
+        args: ["generate", "./"]
+```
+
+### Point Argo CD Repo Server to Vault
+
+Next, let's create a set of secrets that the Argo CD Server will consume:
+
+```bash
+kubectl apply -f kubernetes/argocd-vault-plugin-credentials.yml -n argocd
+```
+
+This secret map contains the values required to find the Vault and the
+credentials used to authenticate.
+
+You must then restart the argocd server:
+
+```
+kubectl delete  pod -n argocd -l app.kubernetes.io/name=argocd-repo-server
+```
+
+### Register an Application with ArgoCD that Leverages a Vault Secret
+
+We will use a repository that will deploy a Kubernetes Secret that references
+a secret from Vault.
+
+Register it with Argo CD as such:
+
+```bash
+APP_NAMESPACE="example-secret-app"
+APP_NAME="$APP_NAMESPACE"
+APP_PATH="$APP_NAME"
+REPO="https://github.com/codihuston/argo-cd-tutorial"
+
+kubectl create ns "$APP_NAMESPACE" || true
+
+# IMPORTANT: DO NOT FORGET --config-management-plugin argument!
+argocd app create "$APP_NAME" --repo "$REPO" \
+  --path "$APP_PATH" \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace "$APP_NAMESPACE" \
+  --config-management-plugin argocd-vault-plugin
+
+# Verify the secret exists and contains the right value
+kubectl get secret example-secret -n "$APP_NAMESPACE"
+kubectl get secret example-secret -n "$APP_NAMESPACE" -o jsonpath='{.data}'
+```
+
+The secrets engine for `vault kv` is `kv-v2`.
+
+> WARNING: See deprecation notice: WARN[0000] spec.plugin.name is set, which
+> means this Application uses a plugin installed in the argocd-cm ConfigMap.
+> Installing plugins via that ConfigMap is deprecated in Argo CD v2.5. Starting
+> in Argo CD v2.6, this Application will fail to sync. Contact your Argo CD
+> admin to make sure an upgrade plan is in place. More info: https://argo-cd.readthedocs.io/en/latest/operator-manual/upgrading/2.4-2.5/ 
+> [The solution is to install via sidecar](https://argo-cd.readthedocs.io/en/stable/user-guide/config-management-plugins/#option-2-configure-plugin-via-sidecar).
+
+
 ## Argo Events
 
 See: [Repo](https://argoproj.github.io/argo-events/)
@@ -417,10 +572,56 @@ Argo Rollouts provides advanced deployment capabilities for your applications,
 allowing you to perform progressive delivery and canary releases, automate
 rollbacks, and control traffic routing. 
 
+# After Thoughts and Concerns
+
+1. The Argo Workflow is using `rootless buildkit` to build images in Docker.
+   First, is building docker images in Kubernetes safe at the runtime level,
+   and if not, how to secure it? See: [Sysbox](https://github.com/nestybox/sysbox)
+
+   Need to consider whether or not the build methods used will produce the
+   exact same docker image as if it were built outside of Kubernetes.
+
+2. While there is integration with Argo CD with Vault, discovery as to whether
+   or not the same integration existing for Workflows (CI) is WIP
+
+   It seems that the Vault integration with Argo CD is used to deliver secrets
+   from Vault as native Kubernetes Secrets.
+   
+   Conjur's Secrets Provider delivers secrets to via Push-to-File or
+   Kubernetes Secrets. Applications can fetch secrets at runtime using the
+   Conjur SDKs so long as they have an authenticator sidecar or init container.
+
+   So instead of end-users defining Kubernetes Secrets in a templated manner
+   with the Argo CD Vault Plugin for integration with a Secrets Management as a
+   backend, they would simply commit deployment manifests to their gitops repo,
+   which would contain the Secrets Provider configuration.
+
+   So the answer to the question as to whether there needs to be Argo CD
+   integration with Conjur seems to be "No" at the moment.
+
+   For Workflows: we can use the authenticator to ensure that any tooling pods
+   can access the secrets needed. Our tooling pods would just need to use
+   Summon or the like to fetch those values (API Keys, URLs, etc.) when running
+   their workflow steps. There may be a challenge would be configuring a Conjur
+   Host such that it can authenticate. Though, I believe all Argo Workflows
+   are run in the same Namespace with the same Service Account?
+
+3. Argo CD can be configured to deploy to multiple Kubernetes clusters, though
+   such patterns don't seem to be well documented by Argo themselves
+
+   See:
+   - [Building a Fleet with ArgoCD and GKE](https://cloud.google.com/blog/products/containers-kubernetes/building-a-fleet-with-argocd-and-gke)
+   - [Multi-Cluster Management for Kubernetes with Cluster API and Argo CD](https://aws.amazon.com/blogs/containers/multi-cluster-management-for-kubernetes-with-cluster-api-and-argo-cd/)
+
 # References
 
 - https://github.com/argoproj/argo-workflows/blob/master/examples/buildkit-template.yaml
 - https://github.com/moby/buildkit
 - https://kind.sigs.k8s.io/docs/user/local-registry/
 - https://argoproj.github.io/argo-workflows/enhanced-depends-logic/
-- https://itnext.io/argocd-secret-management-with-argocd-vault-plugin-539f104aff05
+- Configuring the Vault Plugin: https://itnext.io/argocd-secret-management-with-argocd-vault-plugin-539f104aff05
+
+    ConfigMap Install Method is Deprecated, see below:
+
+    - https://argocd-vault-plugin.readthedocs.io/en/stable/installation/#initcontainer-and-configuration-via-sidecar
+    - https://argo-cd.readthedocs.io/en/stable/user-guide/config-management-plugins/#option-2-configure-plugin-via-sidecar

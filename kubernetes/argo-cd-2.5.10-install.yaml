@@ -9704,6 +9704,12 @@ metadata:
     app.kubernetes.io/name: argocd-cm
     app.kubernetes.io/part-of: argocd
   name: argocd-cm
+data:
+  configManagementPlugins: |-
+    - name: argocd-vault-plugin
+      generate:
+        command: ["argocd-vault-plugin"]
+        args: ["generate", "./"]
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -10250,6 +10256,9 @@ spec:
         - sh
         - -c
         - entrypoint.sh argocd-repo-server --redis argocd-redis:6379
+        envFrom:
+          - secretRef:
+              name: argocd-vault-plugin-credentials
         env:
         - name: ARGOCD_RECONCILIATION_TIMEOUT
           valueFrom:
@@ -10400,6 +10409,9 @@ spec:
           seccompProfile:
             type: RuntimeDefault
         volumeMounts:
+        - name: custom-tools
+          mountPath: /usr/local/bin/argocd-vault-plugin
+          subPath: argocd-vault-plugin
         - mountPath: /app/config/ssh
           name: ssh-known-hosts
         - mountPath: /app/config/tls
@@ -10436,8 +10448,18 @@ spec:
         volumeMounts:
         - mountPath: /var/run/argocd
           name: var-files
+      - name: download-tools
+        image: alpine:3.8
+        command: [sh, -c]
+        args:
+          - wget -O argocd-vault-plugin https://github.com/argoproj-labs/argocd-vault-plugin/releases/download/v1.6.0/argocd-vault-plugin_1.6.0_linux_amd64; chmod +x argocd-vault-plugin; mv argocd-vault-plugin /custom-tools/
+        volumeMounts:
+          - mountPath: /custom-tools
+            name: custom-tools
       serviceAccountName: argocd-repo-server
       volumes:
+      - name: custom-tools
+        emptyDir: {}
       - configMap:
           name: argocd-ssh-known-hosts-cm
         name: ssh-known-hosts

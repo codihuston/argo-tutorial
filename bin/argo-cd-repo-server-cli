@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# References: https://argo-cd.readthedocs.io/en/stable/getting_started/
+main(){
+  ARGO_CD_NAMESPACE="argocd"
+  SELECTOR="app.kubernetes.io/name=argocd-repo-server"
+
+  # List the pods
+  kubectl get pod -n argocd -l "$SELECTOR" -n "$ARGO_CD_NAMESPACE"
+
+  # Get a pod
+  ARGO_CD_REPO_SERVER_POD=$(kubectl get pod -n "$ARGO_CD_NAMESPACE" -l "$SELECTOR" --no-headers | awk '{print $1}')
+
+  # Proxy args into the pod
+  kubectl exec -it "$ARGO_CD_REPO_SERVER_POD" -n "$ARGO_CD_NAMESPACE" -c argocd-repo-server -- "$@"
+}
+
+main "$@"
