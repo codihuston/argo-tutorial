@@ -71,7 +71,7 @@ group :test do
 end
 
 group :development, :test do
-  gem 'cucumber-rails', '~> 2.6.1', require: false
+  gem 'cucumber-rails', '~> 3.0.0', require: false
   gem 'database_cleaner', '~> 2.0.1'
   gem 'rspec-rails', '~> 4.0.2'
   gem 'selenium-webdriver'
